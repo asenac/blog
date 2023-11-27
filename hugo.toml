@@ -1,0 +1,4 @@
+baseURL = 'https://asenac.github.io/blog'
+languageCode = 'en-us'
+title = 'blog'
+theme = 'ananke'
