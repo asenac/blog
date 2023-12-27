@@ -1234,6 +1234,57 @@ earlier.
 
 The graphs are generated from the JSON representation of the query graph and rendered using javascript.
 
-## Column pruning
+## Our first predicate pushdown rule
 
-TODO
+In this model, predicate pushdown is implemented as a set of atomic transformations. For example,
+one of these rules could transpose a `Filter` and a `Project` operator, using the `dereference_scalar_expr`
+we saw earlier. Its implementation is as simple as this:
+
+```rust
+pub struct FilterProjectTransposeRule {}
+
+impl SingleReplacementRule for FilterProjectTransposeRule {
+    fn rule_type(&self) -> OptRuleType {
+        OptRuleType::TopDown
+    }
+
+    fn apply(&self, query_graph: &mut QueryGraph, node_id: NodeId) -> Option<NodeId> {
+        if let QueryNode::Filter { conditions, input } = query_graph.node(node_id) {
+            if let QueryNode::Project {
+                outputs,
+                input: proj_input,
+            } = query_graph.node(*input)
+            {
+                let new_conditions = conditions
+                    .iter()
+                    .map(|c| dereference_scalar_expr(c, outputs))
+                    .collect::<Vec<_>>();
+                let outputs = outputs.clone();
+                let new_filter = query_graph.filter(*proj_input, new_conditions);
+                return Some(query_graph.project(new_filter, outputs));
+            }
+        }
+        None
+    }
+}
+```
+
+Again, we can visualize the effect of this transformation with the following example:
+
+![FilterProjectTransposeRule](images/query-plan-filter-project-transpose-rule.png)
+
+Note that this rule may unzip shared nodes, effectively converting the DAG into a tree.
+For example, if `Project` 1 was a shared node (a node with multiple parents), this rule
+would produce a new projection that is not connected with the original one. In a future
+post we will see how to do predicate pushdown without unzipping the DAG shape of the
+plan, for cases where maximizing sub-plan reuse is needed.
+
+## Next steps
+
+In this first post, we have shown how the query graph is represented, including its
+representation for scalar expressions and computed properties. Also, we have implemented
+two very basic rewrite rules.
+
+In a future post, we will introduce a few more rewrite rules together with the rule
+application driver, that will combine a set of rules in the same traversal of the graph
+until the query graph reaches a fix point where no further rewrites can be applied.
