@@ -1285,6 +1285,6 @@ In this first post, we have shown how the query graph is represented, including 
 representation for scalar expressions and computed properties. Also, we have implemented
 two very basic rewrite rules.
 
-In a future post, we will introduce a few more rewrite rules together with the rule
-application driver, that will combine a set of rules in the same traversal of the graph
-until the query graph reaches a fix point where no further rewrites can be applied.
+In some post in the near future, we will introduce a few more rewrite rules together with
+the rule application driver, that will combine a set of rules in the same traversal of the
+graph until the query graph reaches a fix point where no further rewrites can be applied.
