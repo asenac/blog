@@ -4,7 +4,8 @@ date = 2023-11-27T22:39:57+01:00
 draft = true
 +++
 
-One of my favorite books is Crafting Interpreters by Robert Nystrom, a very practical book that walks
+One of my favorite books is [Crafting Interpreters](https://craftinginterpreters.com/) by Robert Nystrom,
+a very practical book that walks
 you through the process of building an interpreted programming language. In the same spirit, I thought
 it would be fun to write a series of blog spots as I go through the process of writing a new query
 compiler from scratch once again. After having worked in several query compilers, and written a few
