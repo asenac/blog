@@ -1216,11 +1216,23 @@ traversal of the graph, using our visitation utility, until a fix point is reach
 
 ## Visualizing the Query Graph
 
-Throughout the posts in this series, we will...
+Throughout the posts in this series, we will use the following visual representation for reasoning
+about query graphs, where each node represents a logical operator connected via directed arrows
+to their input nodes.
 
 ![Query Plan](images/query-plan-1.png)
 
-TODO
+Within each node, the first line contains the unique ID of the node and its type, together with
+its internal properties. The remaining lines contain the computed properties for that node.
+
+The effect of the rewrite rules can also be visualized with this representation by adding extra
+arrows for the node replacements. For example, the following graph shows the replacement of node
+2 with node 5 that combines the filter expressions in 1 and 2, using the `FilterMergeRule` described
+earlier.
+
+![Query Plan with node replacement](images/query-plan-filter-merge-rule.png)
+
+The graphs are generated from the JSON representation of the query graph and rendered using javascript.
 
 ## Column pruning
 
