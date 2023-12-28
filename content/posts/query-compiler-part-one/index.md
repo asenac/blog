@@ -1145,6 +1145,49 @@ The same approach can be used for computing other bottom-up properties such as t
 keys with known bounds, the predicates/constraints that are known to be true at the output of a given
 node and many more.
 
+Since these properties are computed from the values of the property of its inputs, it must be invalidated
+when there is any node replacement anywhere under a given node. The value of `num_columns` for a given
+node must never change, but other properties like the ones mentioned above may change. In order to make
+this mechanism as generic as possible so it works with all computed properties, we must always invalidate
+the cached properties for a given node if there is a node replacement anywhere under it. That can be
+achieved by adding some logic in the single function to perform node replacements: `QueryGraph::replace_node`.
+As shown below, we traverse the plan upwards removing the cached properties for all the nodes upstream.
+
+```rust
+impl QueryGraph {
+    pub fn replace_node(&mut self, node_id: NodeId, new_node_id: NodeId) {
+        self.invalidate_properties_upwards(node_id);
+        ...
+    }
+
+    fn invalidate_properties_upwards(&mut self, node_id: NodeId) {
+        let mut stack = vec![node_id];
+        while let Some(current_id) = stack.pop() {
+            let prev_size = stack.len();
+            if let Some(parents) = self.parents.get(&current_id) {
+                stack.extend(parents.iter());
+            }
+
+            for idx in prev_size..stack.len() {
+                self.invalidate_node_properties(stack[idx]);
+            }
+        }
+    }
+
+    fn invalidate_node_properties(&mut self, node_id: NodeId) {
+        self.property_cache
+            .borrow_mut()
+            .invalidate_node_properties(node_id)
+    }
+}
+
+impl PropertyCache {
+    pub fn invalidate_node_properties(&mut self, node_id: NodeId) {
+        self.bottom_up_properties.remove(&node_id);
+    }
+}
+```
+
 ## Our first Rewrite Rule
 
 In order to illustrate how to work with this representation, let's write the simplest possible
