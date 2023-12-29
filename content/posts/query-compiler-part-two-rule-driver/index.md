@@ -306,7 +306,11 @@ for example, some ancestor of the current node, which may mean that the current
 subgraph being visited is no longer attached to the query graph. In such case,
 we must abort the traversal and start over from the root node.
 
+`apply_rule_list` below applies a given list of rules until a replacement replacing
+a node that is not the current node being visited happens.
+
 ```rust
+impl Optimizer {
     fn apply_rule_list(
         &self,
         context: &mut OptimizerContext,
@@ -338,8 +342,98 @@ we must abort the traversal and start over from the root node.
         }
         can_continue
     }
+}
 ```
 
 ## A testing framework for the optimizer
 
-## A root-only rule: folding common aggregates
+For testing our rewrite rules, we use the [`datadriven`](https://crates.io/crates/datadriven)
+library. Since we don't have a SQL parser yet, we need to register all our test queries
+in a repository, so that they can be referenced by name from the test files. The snippet
+below shows how one of these queries is constructed.
+
+```rust
+        queries.insert("filter_merge_1".to_string(), {
+            let mut query_graph = QueryGraph::new();
+            let table_scan_id = query_graph.table_scan(0, 10);
+            let filter_1: ScalarExprRef = ScalarExpr::input_ref(0)
+                .binary(BinaryOp::Eq, ScalarExpr::input_ref(1).into())
+                .into();
+            let filter_id_1 = query_graph.filter(table_scan_id, vec![filter_1.clone()]);
+            let filter_2: ScalarExprRef = ScalarExpr::input_ref(2)
+                .binary(BinaryOp::Gt, ScalarExpr::input_ref(3).into())
+                .into();
+            let filter_id_2 = query_graph.filter(filter_id_1, vec![filter_2.clone()]);
+            query_graph.set_entry_node(filter_id_2);
+            query_graph
+        });
+```
+
+Then, in the test file we use the `run` command together with the name of the query we want
+to optimize. The output of the test contains a text representation of the original query graph
+followed by its optimized version. All the nodes are annotated with their computed properties.
+
+After the optimized version we dump the query graph in JSON format after every optimization
+applied to the graph. These JSON dumps can be used to render the graphs you have seen in this
+post.
+
+```
+run
+filter_merge_1
+----
+----
+[2] Filter [gt(ref_2, ref_3)]
+    - Num Columns: 10
+    - Row Type: string, string, string, string, string, string, string, string, string, string
+    - Pulled Up Predicates: gt(ref_2, ref_3), eq(ref_0, ref_1)
+  [1] Filter [eq(ref_0, ref_1)]
+      - Num Columns: 10
+      - Row Type: string, string, string, string, string, string, string, string, string, string
+      - Pulled Up Predicates: eq(ref_0, ref_1)
+    [0] TableScan id: 0, num_columns: 10
+        - Num Columns: 10
+        - Row Type: string, string, string, string, string, string, string, string, string, string
+
+
+Optimized:
+[4] Project [ref_0, ref_0, ref_2, ref_3, ref_4, ref_5, ref_6, ref_7, ref_8, ref_9]
+    - Num Columns: 10
+    - Row Type: string, string, string, string, string, string, string, string, string, string
+    - Pulled Up Predicates: gt(ref_2, ref_3), raw_eq(ref_0, ref_1), raw_eq(ref_1, ref_0)
+  [5] Filter [gt(ref_2, ref_3), eq(ref_0, ref_1)]
+      - Num Columns: 10
+      - Row Type: string, string, string, string, string, string, string, string, string, string
+      - Pulled Up Predicates: gt(ref_2, ref_3), eq(ref_0, ref_1)
+    [0] TableScan id: 0, num_columns: 10
+        - Num Columns: 10
+        - Row Type: string, string, string, string, string, string, string, string, string, string
+
+initial {"nodes":[{"id":"2","label":"[2] Filter [gt(ref_2, ref_3)]","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string","Pulled Up Predicates: gt(ref_2, ref_3), eq(ref_0, ref_1)"]},{"id":"1","label":"[1] Filter [eq(ref_0, ref_1)]","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string","Pulled Up Predicates: eq(ref_0, ref_1)"]},{"id":"0","label":"[0] TableScan id: 0, num_columns: 10","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string"]}],"edges":[{"from":"2","to":"1","label":"input 0"},{"from":"1","to":"0","label":"input 0"}]}
+step TopProjectionRule {"nodes":[{"id":"2","label":"[2] Filter [gt(ref_2, ref_3)]","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string","Pulled Up Predicates: gt(ref_2, ref_3), eq(ref_0, ref_1)"]},{"id":"1","label":"[1] Filter [eq(ref_0, ref_1)]","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string","Pulled Up Predicates: eq(ref_0, ref_1)"]},{"id":"0","label":"[0] TableScan id: 0, num_columns: 10","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string"]},{"id":"3","label":"[3] Project [ref_0, ref_1, ref_2, ref_3, ref_4, ref_5, ref_6, ref_7, ref_8, ref_9]","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string","Pulled Up Predicates: gt(ref_2, ref_3), eq(ref_0, ref_1)"]}],"edges":[{"from":"2","to":"1","label":"input 0"},{"from":"1","to":"0","label":"input 0"},{"from":"3","to":"2","label":"input 0"},{"from":"2","to":"3","label":"TopProjectionRule"}]}
+step ProjectNormalizationRule {"nodes":[{"id":"3","label":"[3] Project [ref_0, ref_1, ref_2, ref_3, ref_4, ref_5, ref_6, ref_7, ref_8, ref_9]","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string","Pulled Up Predicates: gt(ref_2, ref_3), eq(ref_0, ref_1)"]},{"id":"2","label":"[2] Filter [gt(ref_2, ref_3)]","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string","Pulled Up Predicates: gt(ref_2, ref_3), eq(ref_0, ref_1)"]},{"id":"1","label":"[1] Filter [eq(ref_0, ref_1)]","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string","Pulled Up Predicates: eq(ref_0, ref_1)"]},{"id":"0","label":"[0] TableScan id: 0, num_columns: 10","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string"]},{"id":"4","label":"[4] Project [ref_0, ref_0, ref_2, ref_3, ref_4, ref_5, ref_6, ref_7, ref_8, ref_9]","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string","Pulled Up Predicates: gt(ref_2, ref_3), raw_eq(ref_0, ref_1), raw_eq(ref_1, ref_0)"]}],"edges":[{"from":"3","to":"2","label":"input 0"},{"from":"2","to":"1","label":"input 0"},{"from":"1","to":"0","label":"input 0"},{"from":"4","to":"2","label":"input 0"},{"from":"3","to":"4","label":"ProjectNormalizationRule"}]}
+step FilterMergeRule {"nodes":[{"id":"4","label":"[4] Project [ref_0, ref_0, ref_2, ref_3, ref_4, ref_5, ref_6, ref_7, ref_8, ref_9]","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string","Pulled Up Predicates: gt(ref_2, ref_3), raw_eq(ref_0, ref_1), raw_eq(ref_1, ref_0)"]},{"id":"2","label":"[2] Filter [gt(ref_2, ref_3)]","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string","Pulled Up Predicates: gt(ref_2, ref_3), eq(ref_0, ref_1)"]},{"id":"1","label":"[1] Filter [eq(ref_0, ref_1)]","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string","Pulled Up Predicates: eq(ref_0, ref_1)"]},{"id":"0","label":"[0] TableScan id: 0, num_columns: 10","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string"]},{"id":"5","label":"[5] Filter [gt(ref_2, ref_3), eq(ref_0, ref_1)]","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string","Pulled Up Predicates: gt(ref_2, ref_3), eq(ref_0, ref_1)"]}],"edges":[{"from":"4","to":"2","label":"input 0"},{"from":"2","to":"1","label":"input 0"},{"from":"1","to":"0","label":"input 0"},{"from":"5","to":"0","label":"input 0"},{"from":"2","to":"5","label":"FilterMergeRule"}]}
+final {"nodes":[{"id":"4","label":"[4] Project [ref_0, ref_0, ref_2, ref_3, ref_4, ref_5, ref_6, ref_7, ref_8, ref_9]","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string","Pulled Up Predicates: gt(ref_2, ref_3), raw_eq(ref_0, ref_1), raw_eq(ref_1, ref_0)"]},{"id":"5","label":"[5] Filter [gt(ref_2, ref_3), eq(ref_0, ref_1)]","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string","Pulled Up Predicates: gt(ref_2, ref_3), eq(ref_0, ref_1)"]},{"id":"0","label":"[0] TableScan id: 0, num_columns: 10","annotations":["Num Columns: 10","Row Type: string, string, string, string, string, string, string, string, string, string"]}],"edges":[{"from":"4","to":"5","label":"input 0"},{"from":"5","to":"0","label":"input 0"}]}
+----
+----
+
+```
+
+The `run` command accepts an optional list of rules. If that list is specified, the test won't
+use the default `Optimizer` instance, but one created only with the specified rules. This can
+be used to test specific rules, with an specific plan shape at its input, as it happens in the
+following test:
+
+```
+run rules=(FilterMergeRule)
+filter_merge_2
+----
+----
+[3] Filter [lt(ref_4, ref_5)]
+    - Num Columns: 10
+    - Row Type: string, string, string, string, string, string, string, string, string, string
+    - Pulled Up Predicates: gt(ref_2, ref_3), eq(ref_0, ref_1), lt(ref_4, ref_5)
+...
+```
+
+Eventually, once we have a SQLparser, we will use SQL as the input for our tests. Also, new
+commands will be added for adding tables to our test catalog.
