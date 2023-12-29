@@ -59,6 +59,11 @@ pub trait Rule {
 
 Each node replacement is presented by a pair of node IDs for the old and the new nodes.
 
+`JoinPruningRule` can then be implemented using this interface so that given a join node,
+whose parents are not using all the columns it projects, it replaces its parents with
+new nodes referring to the columns of a the pruned version of the join. The code for this
+rewrite rule can be seen [here](https://github.com/asenac/rust-sql-playground/blob/a82da60a428e037ecc1fefc9c2e73a5a59644e71/src/query_graph/optimizer/rules/join_pruning.rs).
+
 Since `SingleReplacementRule` is just a special case for rules that only perform a single
 node replacement, we can implement the more generic `Rule` trait for all `struct`s implementing
 the `SingleReplacementRule` trait:
@@ -76,6 +81,137 @@ impl<T: SingleReplacementRule> Rule for T {
     ) -> Option<Vec<(NodeId, NodeId)>> {
         self.apply(query_graph, node_id)
             .map(|replacement_node| vec![(node_id, replacement_node)])
+    }
+}
+```
+
+## The query rewrite driver
+
+So far we have defined a `Rule` trait that all rewrite rules must implement. The
+next step is to write the rule application driver to apply these rewrite rules while
+traversing the query graph. In order to modify the query graph while traversing it,
+we need a new visitation utility function that will take a new `QueryGraphPrePostVisitorMut`
+trait:
+
+```rust
+pub enum PreOrderVisitationResult {
+    VisitInputs,
+    DoNotVisitInputs,
+    Abort,
+}
+
+pub enum PostOrderVisitationResult {
+    Continue,
+    Abort,
+}
+
+pub trait QueryGraphPrePostVisitorMut {
+    fn visit_pre(
+        &mut self,
+        query_graph: &mut QueryGraph,
+        node_id: &mut NodeId,
+    ) -> PreOrderVisitationResult;
+
+    fn visit_post(
+        &mut self,
+        query_graph: &mut QueryGraph,
+        node_id: &mut NodeId,
+    ) -> PostOrderVisitationResult;
+}
+```
+
+`QueryGraphPrePostVisitorMut` is very similar to its read-only version `QueryGraphPrePostVisitor`.
+The main difference is that both the query graph and the ID of the current node are passed
+via mutable reference.
+
+Also, while applying rules we may need to abort the traversal. For that reason, we have made
+`visit_post` able to return `Abort` to signal that.
+
+A new `visit_mut` function, similar to the previously explained `visit_subgraph` one, using
+a single stack for a pre-post order traversal has to be added to our `QueryGraph` `struct`:
+
+```rust
+impl QueryGraph {
+    pub fn visit_mut<V>(&mut self, visitor: &mut V)
+    where
+        V: QueryGraphPrePostVisitorMut,
+    {
+        let mut stack = vec![VisitationStep::new(self.entry_node)];
+        while let Some(step) = stack.last_mut() {
+            if step.next_child.is_none() {
+                match visitor.visit_pre(self, &mut step.node) {
+                    PreOrderVisitationResult::Abort => break,
+                    PreOrderVisitationResult::VisitInputs => {}
+                    PreOrderVisitationResult::DoNotVisitInputs => {
+                        let result = visitor.visit_post(self, &mut step.node);
+                        stack.pop();
+                        match result {
+                            PostOrderVisitationResult::Abort => break,
+                            PostOrderVisitationResult::Continue => continue,
+                        }
+                    }
+                }
+                step.next_child = Some(0);
+            }
+
+            let node = self.node(step.node);
+            if step.next_child.unwrap() < node.num_inputs() {
+                let input_idx = step.next_child.unwrap();
+                step.next_child = Some(input_idx + 1);
+                stack.push(VisitationStep::new(node.get_input(input_idx)));
+                continue;
+            }
+
+            let result = visitor.visit_post(self, &mut step.node);
+            stack.pop();
+            match result {
+                PostOrderVisitationResult::Abort => break,
+                PostOrderVisitationResult::Continue => {}
+            }
+        }
+    }
+}
+```
+
+Now let's look at the rule application driver. We have called this component `Optimizer`
+although something like `RewritePass` is perhaps more appropriate. An `Optimizer` is
+basically a set of rules that are applied performing several traversal of the query
+graph until a full traversal ends without performing any modification to the query graph.
+
+Each rule indicates the part of the traversal it must be applied in. So, the first thing
+we need to do is to group them:
+
+```rust
+pub struct Optimizer {
+    rules: Vec<Box<dyn Rule>>,
+    root_only_rules: Vec<usize>,
+    top_down_rules: Vec<usize>,
+    bottom_up_rules: Vec<usize>,
+}
+
+impl Optimizer {
+    /// Builds an optimizer instance given a list of rules.
+    pub fn new(rules: Vec<Box<dyn Rule>>) -> Self {
+        let mut root_only_rules = Vec::new();
+        let mut top_down_rules = Vec::new();
+        let mut bottom_up_rules = Vec::new();
+        for (id, rule) in rules.iter().enumerate() {
+            match rule.rule_type() {
+                OptRuleType::Always => {
+                    top_down_rules.push(id);
+                    bottom_up_rules.push(id);
+                }
+                OptRuleType::TopDown => top_down_rules.push(id),
+                OptRuleType::BottomUp => bottom_up_rules.push(id),
+                OptRuleType::RootOnly => root_only_rules.push(id),
+            }
+        }
+        Self {
+            rules,
+            root_only_rules,
+            top_down_rules,
+            bottom_up_rules,
+        }
     }
 }
 ```
