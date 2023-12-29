@@ -1,7 +1,7 @@
 +++
 title = 'A SQL query compiler from scratch in Rust (step by step): Part one, the query plan representation'
-date = 2023-11-27T22:39:57+01:00
-draft = true
+date = 2023-12-29T18:00:00+01:00
+draft = false
 +++
 
 One of my favorite books is [Crafting Interpreters](https://craftinginterpreters.com/) by Robert Nystrom,

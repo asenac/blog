@@ -1,7 +1,7 @@
 +++
 title = 'A SQL query compiler from scratch in Rust (step by step): Part two, the query rewrite driver'
-date = 2023-12-27T22:48:45+01:00
-draft = true
+date = 2023-12-29T19:00:00+01:00
+draft = false
 +++
 
 In the previous post of this series we introduced a couple of very basic rewrite rules.
