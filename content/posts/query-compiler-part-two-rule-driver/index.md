@@ -215,3 +215,107 @@ impl Optimizer {
     }
 }
 ```
+
+```rust
+impl Optimizer {
+    /// Optimize the given query graph by applying the rules in this optimizer instance.
+    pub fn optimize(&self, context: &mut OptimizerContext, query_graph: &mut QueryGraph) {
+        // TODO(asenac) add mechanism to detect infinite loops due to bugs
+        loop {
+            let last_gen_number = query_graph.gen_number;
+
+            self.apply_root_only_rules(context, query_graph);
+
+            let mut visitor = OptimizationVisitor {
+                optimizer: self,
+                context,
+            };
+            query_graph.visit_mut(&mut visitor);
+
+            if last_gen_number == query_graph.gen_number {
+                // Fix-point was reached. A full plan traversal without modifications.
+                break;
+            }
+        }
+    }
+}
+```
+
+```rust
+/// Helper visitor to apply the optimization rules in an optimizer instance during a mutating
+/// pre-post order visitation.
+struct OptimizationVisitor<'a, 'b, 'c> {
+    optimizer: &'a Optimizer,
+    context: &'b mut OptimizerContext<'c>,
+}
+
+impl QueryGraphPrePostVisitorMut for OptimizationVisitor<'_, '_, '_> {
+    fn visit_pre(
+        &mut self,
+        query_graph: &mut QueryGraph,
+        node_id: &mut NodeId,
+    ) -> PreOrderVisitationResult {
+        if self.optimizer.apply_rule_list(
+            self.context,
+            query_graph,
+            &self.optimizer.top_down_rules,
+            node_id,
+        ) {
+            PreOrderVisitationResult::VisitInputs
+        } else {
+            PreOrderVisitationResult::Abort
+        }
+    }
+
+    fn visit_post(
+        &mut self,
+        query_graph: &mut QueryGraph,
+        node_id: &mut NodeId,
+    ) -> PostOrderVisitationResult {
+        if self.optimizer.apply_rule_list(
+            self.context,
+            query_graph,
+            &self.optimizer.bottom_up_rules,
+            node_id,
+        ) {
+            PostOrderVisitationResult::Continue
+        } else {
+            PostOrderVisitationResult::Abort
+        }
+    }
+}
+```
+
+```rust
+    fn apply_rule_list(
+        &self,
+        context: &mut OptimizerContext,
+        query_graph: &mut QueryGraph,
+        rules: &Vec<usize>,
+        node_id: &mut NodeId,
+    ) -> bool {
+        let mut can_continue = true;
+        for rule in rules.iter().map(|id| self.rules.get(*id).unwrap()) {
+            if let Some(replacements) = rule.apply(query_graph, *node_id) {
+                for (original_node, replacement_node) in replacements {
+                    // Replace the node in the graph and apply the remaining rules to the
+                    // returned one.
+                    query_graph.replace_node(original_node, replacement_node);
+
+                    if original_node == *node_id {
+                        // Make the visitation logic aware of the replacement, so the inputs of
+                        // the new node are visited during the pre-order part of the visitation.
+                        *node_id = replacement_node;
+                    } else {
+                        // We must restart the traversal before applying any other rule.
+                        can_continue = false;
+                    }
+                }
+                if !can_continue {
+                    break;
+                }
+            }
+        }
+        can_continue
+    }
+```
