@@ -216,6 +216,11 @@ impl Optimizer {
 }
 ```
 
+The only public method of an optimizer instance is the `optimize` method which takes a mutable
+reference of the query graph. Let's ignore the `OptimizerContext` for now. As shown below,
+it keeps looping until an iteration ends without performing any modification to the query
+graph.
+
 ```rust
 impl Optimizer {
     /// Optimize the given query graph by applying the rules in this optimizer instance.
@@ -240,6 +245,16 @@ impl Optimizer {
     }
 }
 ```
+
+As the `TODO` comment indicates, it needs a mechanism to detect infinite loop bugs in
+the optimizer where a query graph doesn't converge to a fix point. This mechanism
+could be as simple as using a hard limit on the number of iterations allowed.
+
+The traversal of the graph is performed using the `visit_mut` method we saw earlier.
+`OptimizationVisitor` is the pre-post visitor that applies the corresponding set of rules
+on each method: `TopDown` rules are applied in the pre-order part of the traversal, while
+`BottomUp` rules are applied in the post-order part of the traversal. `Always` rules are
+applied of both phases.
 
 ```rust
 /// Helper visitor to apply the optimization rules in an optimizer instance during a mutating
@@ -286,6 +301,11 @@ impl QueryGraphPrePostVisitorMut for OptimizationVisitor<'_, '_, '_> {
 }
 ```
 
+Both methods return `Abort` if any node that is not the current node was replaced,
+for example, some ancestor of the current node, which may mean that the current
+subgraph being visited is no longer attached to the query graph. In such case,
+we must abort the traversal and start over from the root node.
+
 ```rust
     fn apply_rule_list(
         &self,
@@ -319,3 +339,7 @@ impl QueryGraphPrePostVisitorMut for OptimizationVisitor<'_, '_, '_> {
         can_continue
     }
 ```
+
+## A testing framework for the optimizer
+
+## A root-only rule: folding common aggregates
