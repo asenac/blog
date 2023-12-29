@@ -345,6 +345,10 @@ impl Optimizer {
 }
 ```
 
+This is the simple optimization framework we will use for now. Eventually we might need to
+extend it to add exploration rules and a cost-based search through the space of alternative
+plans, but that time hasn't come yet.
+
 ## A testing framework for the optimizer
 
 For testing our rewrite rules, we use the [`datadriven`](https://crates.io/crates/datadriven)
@@ -435,5 +439,5 @@ filter_merge_2
 ...
 ```
 
-Eventually, once we have a SQLparser, we will use SQL as the input for our tests. Also, new
+Eventually, once we have a SQL parser, we will use SQL as the input for our tests. Also, new
 commands will be added for adding tables to our test catalog.
