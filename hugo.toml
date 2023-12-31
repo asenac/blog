@@ -1,4 +1,4 @@
-baseURL = 'https://andres.senac.es/blog'
+baseURL = 'https://andres.senac.es'
 languageCode = 'en-us'
 title = "Andrés Senac's blog"
 theme = 'ananke'
